@@ -62,4 +62,3 @@
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
 *.sh text eol=lf
-src/SimplCommerce.WebHost/wwwroot/lib/* linguist-vendored

@@ -1,37 +1,95 @@
-﻿using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Mvc;
+﻿using System;
+using System.Globalization;
+using System.Linq;
 using Microsoft.EntityFrameworkCore;
-using SimplCommerce.Infrastructure.Data;
+using SimplCommerce.Graftcode;
+using SimplCommerce.Module.Core.Graftcode;
 using SimplCommerce.Module.Core.Models;
 
 namespace SimplCommerce.Module.Core.Areas.Core.Controllers
 {
-    [Area("Core")]
-    [Route("api/districts")]
-    public class DistrictApiController : Controller
+    public class DistrictApiController
     {
-        private readonly IRepository<District> _districtRepository;
+        public static string[] ListDistricts(string stateOrProvinceId) =>
+            GraftAsync.Run(async () =>
+            {
+                var id = ParseId(stateOrProvinceId, nameof(stateOrProvinceId));
+                await using var context = GraftCoreDb.CreateContext();
+                var districts = await context.Set<District>()
+                    .AsNoTracking()
+                    .Where(x => x.StateOrProvinceId == id)
+                    .OrderBy(x => x.Name)
+                    .ToListAsync();
+                return districts.Select(FormatDistrict).ToArray();
+            });
 
-        public DistrictApiController(IRepository<District> districtRepository)
+        public static string GetDistrictCard(string districtId) =>
+            GraftAsync.Run(async () =>
+            {
+                var id = ParseId(districtId, nameof(districtId));
+                await using var context = GraftCoreDb.CreateContext();
+                var district = await context.Set<District>()
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == id);
+                return district == null ? string.Empty : FormatDistrict(district);
+            });
+
+        public static string CreateDistrict(
+            string stateOrProvinceId,
+            string name,
+            string type,
+            string location) =>
+            GraftAsync.Run(async () =>
+            {
+                var id = ParseId(stateOrProvinceId, nameof(stateOrProvinceId));
+                Require(name, nameof(name));
+
+                await using var context = GraftCoreDb.CreateContext();
+                var stateExists = await context.Set<StateOrProvince>()
+                    .AsNoTracking()
+                    .AnyAsync(x => x.Id == id);
+                if (!stateExists)
+                {
+                    throw new InvalidOperationException($"State or province '{stateOrProvinceId}' was not found.");
+                }
+
+                var district = new District
+                {
+                    StateOrProvinceId = id,
+                    Name = name,
+                    Type = type,
+                    Location = location
+                };
+
+                context.Set<District>().Add(district);
+                await context.SaveChangesAsync();
+                return FormatDistrict(district);
+            });
+
+        private static string FormatDistrict(District district) =>
+            string.Join('|',
+                district.Id.ToString(CultureInfo.InvariantCulture),
+                district.StateOrProvinceId.ToString(CultureInfo.InvariantCulture),
+                district.Name ?? string.Empty,
+                district.Type ?? string.Empty,
+                district.Location ?? string.Empty);
+
+        private static long ParseId(string value, string name)
         {
-            _districtRepository = districtRepository;
+            if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                throw new InvalidOperationException($"'{name}' must be a valid integer.");
+            }
+
+            return parsed;
         }
 
-        [HttpGet("/api/states-provinces/{stateOrProvinceId}/districts")]
-        public async Task<IActionResult> GetDistricts(long stateOrProvinceId)
+        private static void Require(string value, string name)
         {
-            var districts = await _districtRepository
-                .Query()
-                .Where(x => x.StateOrProvinceId == stateOrProvinceId)
-                .OrderBy(x => x.Name)
-                .Select(x => new
-                {
-                    x.Id,
-                    x.Name
-                }).ToListAsync();
-
-            return Json(districts);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new InvalidOperationException($"'{name}' is required.");
+            }
         }
     }
 }

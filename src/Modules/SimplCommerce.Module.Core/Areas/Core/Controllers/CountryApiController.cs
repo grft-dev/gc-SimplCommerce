@@ -1,175 +1,165 @@
-﻿using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
+﻿using System;
+using System.Globalization;
+using System.Linq;
 using Microsoft.EntityFrameworkCore;
-using SimplCommerce.Infrastructure.Data;
-using SimplCommerce.Infrastructure.Web.SmartTable;
-using SimplCommerce.Module.Core.Areas.Core.ViewModels;
+using SimplCommerce.Graftcode;
+using SimplCommerce.Module.Core.Graftcode;
 using SimplCommerce.Module.Core.Models;
 
 namespace SimplCommerce.Module.Core.Areas.Core.Controllers
 {
-    [Area("Core")]
-    [Route("api/countries")]
-    public class CountryApiController : Controller
+    public class CountryApiController
     {
-        private readonly IRepositoryWithTypedId<Country, string> _countryRepository;
-
-        public CountryApiController(IRepositoryWithTypedId<Country, string> countryRepository)
-        {
-            _countryRepository = countryRepository;
-        }
-
-        [HttpGet]
-        public async Task<IActionResult> Get([FromQuery]bool? shippingEnabled)
-        {
-            var query = _countryRepository.Query();
-            if (shippingEnabled.HasValue)
+        public static string[] ListCountries(string shippingEnabled = "") =>
+            GraftAsync.Run(async () =>
             {
-                query = query.Where(x => x.IsShippingEnabled == shippingEnabled.Value);
-            }
-            var countries = await query
-                .OrderBy(x => x.Name)
-                .Select(x => new
+                await using var context = GraftCoreDb.CreateContext();
+                var query = context.Set<Country>().AsNoTracking();
+
+                if (!string.IsNullOrWhiteSpace(shippingEnabled))
                 {
-                    Id = x.Id,
-                    Name = x.Name
-                }).ToListAsync();
-            return Json(countries);
-        }
+                    if (!bool.TryParse(shippingEnabled, out var enabled))
+                    {
+                        throw new InvalidOperationException("'shippingEnabled' must be true or false.");
+                    }
 
-        [HttpPost("grid")]
-        public IActionResult List([FromBody] SmartTableParam param)
-        {
-            var query = _countryRepository.Query();
-
-            if (param.Search.PredicateObject != null)
-            {
-                dynamic search = param.Search.PredicateObject;
-
-                if (search.Name != null)
-                {
-                    string name = search.Name;
-                    query = query.Where(x => x.Name.Contains(name));
+                    query = query.Where(x => x.IsShippingEnabled == enabled);
                 }
-            }
 
-            var countries = query.ToSmartTableResult(
-                param,
-                c => new
+                var countries = await query
+                    .OrderBy(x => x.Name)
+                    .ToListAsync();
+                return countries.Select(FormatCountry).ToArray();
+            });
+
+        public static string GetCountryCard(string countryId) =>
+            GraftAsync.Run(async () =>
+            {
+                Require(countryId, nameof(countryId));
+                await using var context = GraftCoreDb.CreateContext();
+                var country = await context.Set<Country>()
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == countryId);
+                return country == null ? string.Empty : FormatCountry(country);
+            });
+
+        public static string CreateCountry(
+            string countryId,
+            string name,
+            string code3,
+            bool shippingEnabled,
+            bool billingEnabled,
+            bool cityEnabled,
+            bool zipCodeEnabled,
+            bool districtEnabled) =>
+            GraftAsync.Run(async () =>
+            {
+                Require(countryId, nameof(countryId));
+                Require(name, nameof(name));
+
+                await using var context = GraftCoreDb.CreateContext();
+                var exists = await context.Set<Country>()
+                    .AsNoTracking()
+                    .AnyAsync(x => x.Id == countryId);
+                if (exists)
                 {
-                    c.Id,
-                    c.Name,
-                    c.Code3,
-                    c.IsShippingEnabled,
-                    c.IsBillingEnabled,
-                    c.IsCityEnabled,
-                    c.IsZipCodeEnabled,
-                    c.IsDistrictEnabled
-                });
+                    throw new InvalidOperationException($"Country '{countryId}' already exists.");
+                }
 
-            return Json(countries);
-        }
-
-        [HttpGet("{id}")]
-        public async Task<IActionResult> Get(string id)
-        {
-            var country = await _countryRepository.Query().FirstOrDefaultAsync(x => x.Id == id);
-            if (country == null)
-            {
-                return NotFound();
-            }
-
-            var model = new CountryForm
-            {
-                Id = country.Id,
-                Name = country.Name,
-                Code3 = country.Code3,
-                IsBillingEnabled = country.IsBillingEnabled,
-                IsShippingEnabled = country.IsShippingEnabled,
-                IsCityEnabled = country.IsCityEnabled,
-                IsZipCodeEnabled = country.IsZipCodeEnabled,
-                IsDistrictEnabled = country.IsDistrictEnabled
-            };
-
-            return Json(model);
-        }
-
-        [HttpPut("{id}")]
-        [Authorize(Roles = "admin")]
-        public async Task<IActionResult> Put(string id, [FromBody] CountryForm model)
-        {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
-            var country = await _countryRepository.Query().FirstOrDefaultAsync(x => x.Id == id);
-            if (country == null)
-            {
-                return NotFound();
-            }
-
-            country.Name = model.Name;
-            country.Code3 = model.Code3;
-            country.IsShippingEnabled = model.IsShippingEnabled;
-            country.IsBillingEnabled = model.IsBillingEnabled;
-            country.IsCityEnabled = model.IsCityEnabled;
-            country.IsZipCodeEnabled = model.IsZipCodeEnabled;
-            country.IsDistrictEnabled = model.IsDistrictEnabled;
-
-            await _countryRepository.SaveChangesAsync();
-
-            return Accepted();
-        }
-
-        [HttpPost]
-        [Authorize(Roles = "admin")]
-        public async Task<IActionResult> Post([FromBody] CountryForm model)
-        {
-            if (ModelState.IsValid)
-            {
-                var country = new Country(model.Id)
+                var country = new Country(countryId)
                 {
-                    Name = model.Name,
-                    Code3 = model.Code3,
-                    IsBillingEnabled = model.IsBillingEnabled,
-                    IsShippingEnabled = model.IsShippingEnabled,
-                    IsCityEnabled = model.IsCityEnabled,
-                    IsZipCodeEnabled = model.IsZipCodeEnabled,
-                    IsDistrictEnabled = model.IsDistrictEnabled
-            };
+                    Name = name,
+                    Code3 = code3,
+                    IsShippingEnabled = shippingEnabled,
+                    IsBillingEnabled = billingEnabled,
+                    IsCityEnabled = cityEnabled,
+                    IsZipCodeEnabled = zipCodeEnabled,
+                    IsDistrictEnabled = districtEnabled
+                };
 
-                _countryRepository.Add(country);
-                await _countryRepository.SaveChangesAsync();
+                context.Set<Country>().Add(country);
+                await context.SaveChangesAsync();
 
-                return CreatedAtAction(nameof(Get), new { id = country.Id }, null);
-            }
-            return BadRequest(ModelState);
-        }
+                return FormatCountry(country);
+            });
 
-        [HttpDelete("{id}")]
-        [Authorize(Roles = "admin")]
-        public async Task<IActionResult> Delete(string id)
+        public static string UpdateCountry(
+            string countryId,
+            string name,
+            string code3,
+            bool shippingEnabled,
+            bool billingEnabled,
+            bool cityEnabled,
+            bool zipCodeEnabled,
+            bool districtEnabled) =>
+            GraftAsync.Run(async () =>
+            {
+                Require(countryId, nameof(countryId));
+                Require(name, nameof(name));
+
+                await using var context = GraftCoreDb.CreateContext();
+                var country = await context.Set<Country>()
+                    .FirstOrDefaultAsync(x => x.Id == countryId);
+                if (country == null)
+                {
+                    return string.Empty;
+                }
+
+                country.Name = name;
+                country.Code3 = code3;
+                country.IsShippingEnabled = shippingEnabled;
+                country.IsBillingEnabled = billingEnabled;
+                country.IsCityEnabled = cityEnabled;
+                country.IsZipCodeEnabled = zipCodeEnabled;
+                country.IsDistrictEnabled = districtEnabled;
+
+                await context.SaveChangesAsync();
+                return FormatCountry(country);
+            });
+
+        public static bool DeleteCountry(string countryId) =>
+            GraftAsync.Run(async () =>
+            {
+                Require(countryId, nameof(countryId));
+
+                await using var context = GraftCoreDb.CreateContext();
+                var country = await context.Set<Country>()
+                    .FirstOrDefaultAsync(x => x.Id == countryId);
+                if (country == null)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    context.Set<Country>().Remove(country);
+                    await context.SaveChangesAsync();
+                    return true;
+                }
+                catch (DbUpdateException)
+                {
+                    throw new InvalidOperationException(
+                        $"The country {country.Name} can't not be deleted because it is referenced by other tables");
+                }
+            });
+
+        private static string FormatCountry(Country country) =>
+            string.Join('|',
+                country.Id ?? string.Empty,
+                country.Name ?? string.Empty,
+                country.Code3 ?? string.Empty,
+                country.IsShippingEnabled.ToString(CultureInfo.InvariantCulture),
+                country.IsBillingEnabled.ToString(CultureInfo.InvariantCulture),
+                country.IsCityEnabled.ToString(CultureInfo.InvariantCulture),
+                country.IsZipCodeEnabled.ToString(CultureInfo.InvariantCulture),
+                country.IsDistrictEnabled.ToString(CultureInfo.InvariantCulture));
+
+        private static void Require(string value, string name)
         {
-            var country = await _countryRepository.Query().FirstOrDefaultAsync(x => x.Id == id);
-            if (country == null)
+            if (string.IsNullOrWhiteSpace(value))
             {
-                return NotFound();
+                throw new InvalidOperationException($"'{name}' is required.");
             }
-
-            try
-            {
-                _countryRepository.Remove(country);
-                await _countryRepository.SaveChangesAsync();
-            }
-            catch (DbUpdateException)
-            {
-                return BadRequest(new { Error = $"The country {country.Name} can't not be deleted because it is referenced by other tables" });
-            }
-
-            return NoContent();
         }
     }
 }
