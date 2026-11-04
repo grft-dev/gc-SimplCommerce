@@ -1,0 +1,36 @@
+{
+  "modules": [
+    "SimplCommerce.Module.Core.dll"
+  ],
+  "types": [
+    {
+      "publicApiType": "SimplCommerce.Module.Core.Areas.Core.Controllers.CountryApiController",
+      "methods": [
+        "ListCountries",
+        "GetCountryCard",
+        "CreateCountry",
+        "UpdateCountry",
+        "DeleteCountry"
+      ]
+    },
+    {
+      "publicApiType": "SimplCommerce.Module.Core.Areas.Core.Controllers.StateOrProvinceApiController",
+      "methods": [
+        "ListAllStatesOrProvinces",
+        "ListStatesOrProvinces",
+        "GetStateOrProvinceCard",
+        "CreateStateOrProvince",
+        "UpdateStateOrProvince",
+        "DeleteStateOrProvince"
+      ]
+    },
+    {
+      "publicApiType": "SimplCommerce.Module.Core.Areas.Core.Controllers.DistrictApiController",
+      "methods": [
+        "ListDistricts",
+        "GetDistrictCard",
+        "CreateDistrict"
+      ]
+    }
+  ]
+}

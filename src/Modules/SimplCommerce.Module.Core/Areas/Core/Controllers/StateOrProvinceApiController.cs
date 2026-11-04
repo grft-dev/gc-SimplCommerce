@@ -1,181 +1,158 @@
-﻿using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
+﻿using System;
+using System.Globalization;
+using System.Linq;
 using Microsoft.EntityFrameworkCore;
-using SimplCommerce.Infrastructure.Data;
-using SimplCommerce.Infrastructure.Web.SmartTable;
-using SimplCommerce.Module.Core.Areas.Core.ViewModels;
+using SimplCommerce.Graftcode;
+using SimplCommerce.Module.Core.Graftcode;
 using SimplCommerce.Module.Core.Models;
 
 namespace SimplCommerce.Module.Core.Areas.Core.Controllers
 {
-    [Area("Core")]
-    [Route("api/states-provinces")]
-    public class StateOrProvinceApiController : Controller
+    public class StateOrProvinceApiController
     {
-        private readonly IRepository<StateOrProvince> _stateOrProvinceRepository;
-        private readonly IRepositoryWithTypedId<Country, string> _countryRepository;
+        public static string[] ListAllStatesOrProvinces() =>
+            GraftAsync.Run(async () =>
+            {
+                await using var context = GraftCoreDb.CreateContext();
+                var statesOrProvinces = await context.Set<StateOrProvince>()
+                    .AsNoTracking()
+                    .OrderBy(x => x.Name)
+                    .ToListAsync();
+                return statesOrProvinces.Select(FormatStateOrProvince).ToArray();
+            });
 
-        public StateOrProvinceApiController(IRepository<StateOrProvince> stateOrProvinceRepository, IRepositoryWithTypedId<Country, string> countryRepository)
-        {
-            _stateOrProvinceRepository = stateOrProvinceRepository;
-            _countryRepository = countryRepository;
-        }
+        public static string[] ListStatesOrProvinces(string countryId) =>
+            GraftAsync.Run(async () =>
+            {
+                Require(countryId, nameof(countryId));
+                await using var context = GraftCoreDb.CreateContext();
+                var statesOrProvinces = await context.Set<StateOrProvince>()
+                    .AsNoTracking()
+                    .Where(x => x.CountryId == countryId)
+                    .OrderBy(x => x.Name)
+                    .ToListAsync();
+                return statesOrProvinces.Select(FormatStateOrProvince).ToArray();
+            });
 
-        [HttpGet("/api/countries/{countryId}/states-provinces")]
-        public async Task<IActionResult> GetStatesOrProvinces(string countryId)
-        {
-            var statesOrProvinces = await _stateOrProvinceRepository.Query()
-                .Where(x => x.CountryId == countryId)
-                .OrderBy(x => x.Name)
-                .Select(x => new
+        public static string GetStateOrProvinceCard(string stateOrProvinceId) =>
+            GraftAsync.Run(async () =>
+            {
+                var id = ParseId(stateOrProvinceId, nameof(stateOrProvinceId));
+                await using var context = GraftCoreDb.CreateContext();
+                var stateOrProvince = await context.Set<StateOrProvince>()
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == id);
+                return stateOrProvince == null ? string.Empty : FormatStateOrProvince(stateOrProvince);
+            });
+
+        public static string CreateStateOrProvince(
+            string countryId,
+            string name,
+            string code,
+            string type) =>
+            GraftAsync.Run(async () =>
+            {
+                Require(countryId, nameof(countryId));
+                Require(name, nameof(name));
+
+                await using var context = GraftCoreDb.CreateContext();
+                var countryExists = await context.Set<Country>()
+                    .AsNoTracking()
+                    .AnyAsync(x => x.Id == countryId);
+                if (!countryExists)
                 {
-                    Id = x.Id,
-                    Name = x.Name
-                })
-                .ToListAsync();
-
-            return Ok(statesOrProvinces);
-        }
-
-        [HttpGet]
-        public async Task<IActionResult> Get()
-        {
-            var statesOrProvinces = await _stateOrProvinceRepository.Query()
-                .OrderBy(x => x.Name)
-                .Select(x => new
-                {
-                    x.Id,
-                    x.Name
-                })
-                .ToListAsync();
-
-            return Ok(statesOrProvinces);
-        }
-
-        [HttpPost("grid")]
-        public IActionResult List(string countryId, [FromBody] SmartTableParam param)
-        {
-            var query = _stateOrProvinceRepository.Query().Where(sp => sp.CountryId == countryId);
-
-            if (param.Search.PredicateObject != null)
-            {
-                dynamic search = param.Search.PredicateObject;
-
-                if (search.Name != null)
-                {
-                    string name = search.Name;
-                    query = query.Where(x => x.Name.Contains(name));
-                }
-            }
-
-            var stateProvinces = query.ToSmartTableResult(
-                param,
-                 sp => new
-                 {
-                     sp.Id,
-                     sp.Name,
-                     sp.Code,
-                     sp.CountryId
-                 });
-
-            return Json(stateProvinces);
-        }
-
-        [HttpGet("{id}")]
-        public async Task<IActionResult> Get(long id)
-        {
-            var stateProvince = await _stateOrProvinceRepository.Query().FirstOrDefaultAsync(x => x.Id == id);
-            if (stateProvince == null)
-            {
-                return NotFound();
-            }
-
-            var model = new StateOrProvinceForm
-            {
-                Id = stateProvince.Id,
-                Name = stateProvince.Name,
-                Code = stateProvince.Code,
-                CountryId = stateProvince.CountryId,
-                Type = stateProvince.Type
-            };
-
-            return Json(model);
-        }
-
-        [HttpPut("{id}")]
-        [Authorize(Roles = "admin")]
-        public async Task<IActionResult> Put(long id, [FromBody] StateOrProvinceForm model)
-        {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(ModelState);
-            }
-
-            var stateProvince = await _stateOrProvinceRepository.Query().FirstOrDefaultAsync(x => x.Id == id);
-            if (stateProvince == null)
-            {
-                return NotFound();
-            }
-
-            stateProvince.Name = model.Name;
-            stateProvince.Code = model.Code;
-            stateProvince.Type = model.Type;
-
-            await _stateOrProvinceRepository.SaveChangesAsync();
-            return Accepted();
-        }
-
-        [HttpPost]
-        [Authorize(Roles = "admin")]
-        public async Task<IActionResult> Post([FromBody] StateOrProvinceForm model)
-        {
-            if (ModelState.IsValid)
-            {
-                var country = await _countryRepository.Query().FirstOrDefaultAsync(x => x.Id == model.CountryId);
-                if (country == null)
-                {
-                    return NotFound();
+                    throw new InvalidOperationException($"Country '{countryId}' was not found.");
                 }
 
-                var stateProvince = new StateOrProvince
+                var stateOrProvince = new StateOrProvince
                 {
-                    Name = model.Name,
-                    Code = model.Code,
-                    CountryId = country.Id,
-                    Country = country,
-                    Type = model.Type
+                    CountryId = countryId,
+                    Name = name,
+                    Code = code,
+                    Type = type
                 };
-                _stateOrProvinceRepository.Add(stateProvince);
-                await _stateOrProvinceRepository.SaveChangesAsync();
 
-                return CreatedAtAction(nameof(Get), new { id = stateProvince.Id }, null);
+                context.Set<StateOrProvince>().Add(stateOrProvince);
+                await context.SaveChangesAsync();
+                return FormatStateOrProvince(stateOrProvince);
+            });
+
+        public static string UpdateStateOrProvince(
+            string stateOrProvinceId,
+            string name,
+            string code,
+            string type) =>
+            GraftAsync.Run(async () =>
+            {
+                var id = ParseId(stateOrProvinceId, nameof(stateOrProvinceId));
+                Require(name, nameof(name));
+
+                await using var context = GraftCoreDb.CreateContext();
+                var stateOrProvince = await context.Set<StateOrProvince>()
+                    .FirstOrDefaultAsync(x => x.Id == id);
+                if (stateOrProvince == null)
+                {
+                    return string.Empty;
+                }
+
+                stateOrProvince.Name = name;
+                stateOrProvince.Code = code;
+                stateOrProvince.Type = type;
+
+                await context.SaveChangesAsync();
+                return FormatStateOrProvince(stateOrProvince);
+            });
+
+        public static bool DeleteStateOrProvince(string stateOrProvinceId) =>
+            GraftAsync.Run(async () =>
+            {
+                var id = ParseId(stateOrProvinceId, nameof(stateOrProvinceId));
+
+                await using var context = GraftCoreDb.CreateContext();
+                var stateOrProvince = await context.Set<StateOrProvince>()
+                    .FirstOrDefaultAsync(x => x.Id == id);
+                if (stateOrProvince == null)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    context.Set<StateOrProvince>().Remove(stateOrProvince);
+                    await context.SaveChangesAsync();
+                    return true;
+                }
+                catch (DbUpdateException)
+                {
+                    throw new InvalidOperationException(
+                        $"The state or province {stateOrProvince.Name} can't not be deleted because it is referenced by other tables");
+                }
+            });
+
+        private static string FormatStateOrProvince(StateOrProvince stateOrProvince) =>
+            string.Join('|',
+                stateOrProvince.Id.ToString(CultureInfo.InvariantCulture),
+                stateOrProvince.CountryId ?? string.Empty,
+                stateOrProvince.Name ?? string.Empty,
+                stateOrProvince.Code ?? string.Empty,
+                stateOrProvince.Type ?? string.Empty);
+
+        private static long ParseId(string value, string name)
+        {
+            if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                throw new InvalidOperationException($"'{name}' must be a valid integer.");
             }
-            return BadRequest(ModelState);
+
+            return parsed;
         }
 
-        [HttpDelete("{id}")]
-        [Authorize(Roles = "admin")]
-        public async Task<IActionResult> Delete(long id)
+        private static void Require(string value, string name)
         {
-            var stateProvince = await _stateOrProvinceRepository.Query().FirstOrDefaultAsync(x => x.Id == id);
-            if (stateProvince == null)
+            if (string.IsNullOrWhiteSpace(value))
             {
-                return NotFound();
+                throw new InvalidOperationException($"'{name}' is required.");
             }
-
-            try
-            {
-                _stateOrProvinceRepository.Remove(stateProvince);
-                await _stateOrProvinceRepository.SaveChangesAsync();
-            }
-            catch (DbUpdateException)
-            {
-                return BadRequest(new { Error = $"The state or province {stateProvince.Name} can't not be deleted because it is referenced by other tables" });
-            }
-
-            return NoContent();
         }
     }
 }
